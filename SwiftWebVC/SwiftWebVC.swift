@@ -11,8 +11,10 @@ import WebKit
 public protocol SwiftWebVCDelegate: class {
     func didStartLoading()
     func didFinishLoading(success: Bool)
+    func openCustomUrl(webView: WKWebView, url: URL)
 }
 
+private let estimatedProgressKeyPath = "estimatedProgress"
 public class SwiftWebVC: UIViewController {
     
     public weak var delegate: SwiftWebVCDelegate?
@@ -20,10 +22,21 @@ public class SwiftWebVC: UIViewController {
     var buttonColor: UIColor? = nil
     var titleColor: UIColor? = nil
     var closing: Bool! = false
+    public final var progressBar: UIProgressView {
+        get {
+            return _progressBar
+        }
+    }
+    private lazy final var _progressBar: UIProgressView = {
+        let progressBar = UIProgressView(progressViewStyle: .bar)
+        progressBar.backgroundColor = .clear
+        progressBar.trackTintColor = .clear
+        return progressBar
+    }()
     
     lazy var backBarButtonItem: UIBarButtonItem =  {
         var tempBackBarButtonItem = UIBarButtonItem(image: SwiftWebVC.bundledImage(named: "SwiftWebVCBack"),
-                                                    style: UIBarButtonItemStyle.plain,
+                                                    style: UIBarButtonItem.Style.plain,
                                                     target: self,
                                                     action: #selector(SwiftWebVC.goBackTapped(_:)))
         tempBackBarButtonItem.width = 18.0
@@ -33,7 +46,7 @@ public class SwiftWebVC: UIViewController {
     
     lazy var forwardBarButtonItem: UIBarButtonItem =  {
         var tempForwardBarButtonItem = UIBarButtonItem(image: SwiftWebVC.bundledImage(named: "SwiftWebVCNext"),
-                                                       style: UIBarButtonItemStyle.plain,
+                                                       style: UIBarButtonItem.Style.plain,
                                                        target: self,
                                                        action: #selector(SwiftWebVC.goForwardTapped(_:)))
         tempForwardBarButtonItem.width = 18.0
@@ -42,7 +55,7 @@ public class SwiftWebVC: UIViewController {
     }()
     
     lazy var refreshBarButtonItem: UIBarButtonItem = {
-        var tempRefreshBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonSystemItem.refresh,
+        var tempRefreshBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonItem.SystemItem.refresh,
                                                        target: self,
                                                        action: #selector(SwiftWebVC.reloadTapped(_:)))
         tempRefreshBarButtonItem.tintColor = self.buttonColor
@@ -50,7 +63,7 @@ public class SwiftWebVC: UIViewController {
     }()
     
     lazy var stopBarButtonItem: UIBarButtonItem = {
-        var tempStopBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonSystemItem.stop,
+        var tempStopBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonItem.SystemItem.stop,
                                                     target: self,
                                                     action: #selector(SwiftWebVC.stopTapped(_:)))
         tempStopBarButtonItem.tintColor = self.buttonColor
@@ -58,7 +71,7 @@ public class SwiftWebVC: UIViewController {
     }()
     
     lazy var actionBarButtonItem: UIBarButtonItem = {
-        var tempActionBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonSystemItem.action,
+        var tempActionBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonItem.SystemItem.action,
                                                       target: self,
                                                       action: #selector(SwiftWebVC.actionButtonTapped(_:)))
         tempActionBarButtonItem.tintColor = self.buttonColor
@@ -68,8 +81,14 @@ public class SwiftWebVC: UIViewController {
     
     lazy var webView: WKWebView = {
         var tempWebView = WKWebView(frame: UIScreen.main.bounds)
+        if #available(iOS 10.0, *) {
+            tempWebView.configuration.dataDetectorTypes = []
+        } else {
+            // Fallback on earlier versions
+        }
         tempWebView.uiDelegate = self
         tempWebView.navigationDelegate = self
+        tempWebView.addObserver(self, forKeyPath: estimatedProgressKeyPath, options: .new, context: nil)
         return tempWebView;
     }()
     
@@ -86,6 +105,8 @@ public class SwiftWebVC: UIViewController {
         UIApplication.shared.isNetworkActivityIndicatorVisible = false
         webView.uiDelegate = nil;
         webView.navigationDelegate = nil;
+        
+        webView.removeObserver(self, forKeyPath: estimatedProgressKeyPath, context: nil)
     }
     
     public convenience init(urlString: String, sharingEnabled: Bool = true) {
@@ -149,6 +170,8 @@ public class SwiftWebVC: UIViewController {
         else if (UIDevice.current.userInterfaceIdiom == UIUserInterfaceIdiom.pad) {
             self.navigationController?.setToolbarHidden(true, animated: true)
         }
+        
+        view.addSubview(_progressBar)
     }
     
     override public func viewWillDisappear(_ animated: Bool) {
@@ -163,7 +186,23 @@ public class SwiftWebVC: UIViewController {
         super.viewDidDisappear(true)
         UIApplication.shared.isNetworkActivityIndicatorVisible = false
     }
-    
+    open override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        webView.frame = view.bounds
+        
+        let isIOS11 = ProcessInfo.processInfo.isOperatingSystemAtLeast(
+            OperatingSystemVersion(majorVersion: 11, minorVersion: 0, patchVersion: 0))
+        let top = isIOS11 ? CGFloat(0.0) : topLayoutGuide.length
+        let insets = UIEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
+        webView.scrollView.contentInset = insets
+        webView.scrollView.scrollIndicatorInsets = insets
+        
+        view.bringSubviewToFront(progressBar)
+        progressBar.frame = CGRect(x: view.frame.minX,
+                                   y: topLayoutGuide.length,
+                                   width: view.frame.size.width,
+                                   height: 2)
+    }
     ////////////////////////////////////////////////
     // Toolbar
     
@@ -173,8 +212,8 @@ public class SwiftWebVC: UIViewController {
         
         let refreshStopBarButtonItem: UIBarButtonItem = webView.isLoading ? stopBarButtonItem : refreshBarButtonItem
         
-        let fixedSpace: UIBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonSystemItem.fixedSpace, target: nil, action: nil)
-        let flexibleSpace: UIBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonSystemItem.flexibleSpace, target: nil, action: nil)
+        let fixedSpace: UIBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonItem.SystemItem.fixedSpace, target: nil, action: nil)
+        let flexibleSpace: UIBarButtonItem = UIBarButtonItem(barButtonSystemItem: UIBarButtonItem.SystemItem.flexibleSpace, target: nil, action: nil)
         
         if (UIDevice.current.userInterfaceIdiom == UIUserInterfaceIdiom.pad) {
             
@@ -278,6 +317,24 @@ public class SwiftWebVC: UIViewController {
         return image
     }
     
+    open override func observeValue(forKeyPath keyPath: String?,
+                                    of object: Any?,
+                                    change: [NSKeyValueChangeKey : Any]?,
+                                    context: UnsafeMutableRawPointer?) {
+        guard let theKeyPath = keyPath , object as? WKWebView == webView else {
+            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
+            return
+        }
+        
+        if theKeyPath == estimatedProgressKeyPath {
+            updateProgress()
+        }
+    }
+    private final func updateProgress() {
+        let completed = webView.estimatedProgress == 1.0
+        progressBar.setProgress(completed ? 0.0 : Float(webView.estimatedProgress), animated: !completed)
+        UIApplication.shared.isNetworkActivityIndicatorVisible = !completed
+    }
 }
 
 extension SwiftWebVC: WKUIDelegate {
@@ -319,9 +376,10 @@ extension SwiftWebVC: WKNavigationDelegate {
         let hostAddress = navigationAction.request.url?.host
         
         if (navigationAction.targetFrame == nil) {
-            if UIApplication.shared.canOpenURL(url!) {
-                UIApplication.shared.openURL(url!)
-            }
+//            if UIApplication.shared.canOpenURL(url!) {
+//                UIApplication.shared.openURL(url!)
+//            }
+            webView.load(navigationAction.request)
         }
         
         // To connnect app store
@@ -348,9 +406,17 @@ extension SwiftWebVC: WKNavigationDelegate {
             openCustomApp(urlScheme: "mailto://", additional_info: url_elements[1])
             decisionHandler(.cancel)
             
+        case "http":
+            break;
+        case "https":
+            break
         default:
             //print("Default")
-            break
+            decisionHandler(.cancel)
+            DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + DispatchTimeInterval.milliseconds(50)) {
+                self.delegate?.openCustomUrl(webView: webView, url: url!)
+            }
+            return
         }
         
         decisionHandler(.allow)
